@@ -1,0 +1,23 @@
+{
+  "llm_base_url": "http://localhost:1234/v1",
+  "llm_model": "auto",
+  "theme": "theme_male",
+  "language": "zh_CN",
+  "model_n_ctx": 13056,
+  "max_tokens": 0,
+  "thread_max_turns": 6,
+  "thread_max_chars": 5000,
+  "kb_char_budget": 0,
+  "translate_chunk_chars": 0,
+  "translate_single_max_chars": 6000,
+  "keep_runtime_config": true,
+  "task_plan_enabled": true,
+  "feasibility_gate_enabled": true,
+  "task_understand_v2": true,
+  "evidence_pack_v1": true,
+  "chat_backend": "local",
+  "local_chat_enabled": true,
+  "cloud_base_url": "",
+  "cloud_api_key": "",
+  "cloud_model": ""
+}
