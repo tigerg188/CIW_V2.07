@@ -40,6 +40,18 @@ def get_local_base_url(settings: Optional[Dict[str, Any]] = None) -> str:
     return (data.get("llm_base_url") or DEFAULT_BASE_URL).rstrip("/")
 
 
+def _normalize_openai_base(url: str) -> str:
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return ""
+    low = u.lower()
+    if "console.groq.com" in low:
+        return "https://api.groq.com/openai/v1"
+    if u.endswith("/V1"):
+        u = u[:-3] + "/v1"
+    return u
+
+
 def resolve_chat_config(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     data = settings if settings is not None else _load_settings()
     local_url = (data.get("llm_base_url") or DEFAULT_BASE_URL).rstrip("/")
@@ -52,7 +64,7 @@ def resolve_chat_config(settings: Optional[Dict[str, Any]] = None) -> Dict[str, 
         backend = "cloud"
 
     if backend == "cloud":
-        cloud_url = (data.get("cloud_base_url") or "").strip().rstrip("/")
+        cloud_url = _normalize_openai_base(data.get("cloud_base_url") or "")
         cloud_model = (data.get("cloud_model") or "").strip() or "gpt-4o-mini"
         cloud_key = (data.get("cloud_api_key") or "").strip()
         return {
@@ -165,9 +177,11 @@ def ask(
                 % (finish or "?", len(content or ""), usage, (cfg or {}).get("backend", "?"))
             )
             if str(finish).lower() in ("length", "max_tokens", "length_cutoff"):
-                _log.warning("生成因长度限制结束（finish_reason=%s）" % finish)
-                if content and not str(content).rstrip().endswith(("…", "...", "（未完）")):
-                    content = str(content).rstrip() + "\n\n【系统提示】答复可能因长度限制未写完，可要求「续写未完成部分」。"
+                _log.warning(
+                    "生成因长度限制结束（finish_reason=%s, chars=%s）；"
+                    "可提高 cloud_max_tokens（默认 8192）"
+                    % (finish, len(content or ""))
+                )
         except Exception:
             pass
         if not str(content).strip():
@@ -181,6 +195,53 @@ def ask(
         return False, "请求超时，请稍后重试或减少知识库范围。"
     except Exception as e:
         return False, f"调用大模型时出现问题：{e}"
+
+
+def test_cloud_connection(base_url: str, api_key: str = "", model: str = "") -> tuple:
+    """探测 OpenAI 兼容云端：优先 GET /models，失败则试一次最小 chat。返回 (ok, message)。"""
+    url = _normalize_openai_base(base_url or "")
+    if not url:
+        return False, "base_url 为空"
+    headers = {"Content-Type": "application/json"}
+    if (api_key or "").strip():
+        headers["Authorization"] = f"Bearer {api_key.strip()}"
+    models_err = ""
+    try:
+        r = requests.get(f"{url}/models", headers=headers, timeout=20)
+        if r.status_code == 200:
+            data = r.json() if r.content else {}
+            ids = []
+            for m in (data.get("data") or [])[:12]:
+                mid = m.get("id") if isinstance(m, dict) else str(m)
+                if mid:
+                    ids.append(mid)
+            preview = "、".join(ids[:8]) if ids else "（未列出模型 id）"
+            return True, f"GET /models 成功；示例：{preview}"
+        if r.status_code in (401, 403):
+            return False, f"鉴权失败 HTTP {r.status_code}（请检查 api_key）"
+        models_err = f"GET /models → HTTP {r.status_code}"
+    except requests.exceptions.Timeout:
+        return False, "连接超时（请检查网络或 base_url）"
+    except requests.exceptions.ConnectionError as e:
+        return False, f"无法连接：{e}"
+    except Exception as e:
+        models_err = str(e)
+    m = (model or "").strip() or "gpt-4o-mini"
+    try:
+        payload = {
+            "model": m,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 8,
+        }
+        r = requests.post(f"{url}/chat/completions", headers=headers, json=payload, timeout=45)
+        if r.status_code == 200:
+            return True, f"chat/completions 成功（model={m}）"
+        body = (r.text or "")[:200]
+        if r.status_code in (401, 403):
+            return False, f"鉴权失败 HTTP {r.status_code}：{body}"
+        return False, f"HTTP {r.status_code}：{body}；{models_err}"
+    except Exception as e:
+        return False, f"chat 探测失败：{e}"
 
 
 def check_connection(base_url=DEFAULT_BASE_URL) -> Tuple[bool, List[str]]:
