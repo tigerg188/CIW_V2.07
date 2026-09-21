@@ -25,7 +25,8 @@ from PySide6.QtWidgets import QApplication
 from office.monitor import setup_logger
 from ui.main_window import MainWindow
 
-SETTINGS_PATH = "settings.json"
+_APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_PATH = os.path.join(_APP_ROOT, "settings.json")
 
 
 def load_settings():
